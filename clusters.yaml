@@ -1,0 +1,11 @@
+my-cluster1:
+  kubeconfig: "/path/to/kubeconfig"
+  include_namespaces:
+    - "default"
+
+my-cluster2:
+  kubeconfig: "/path/to/kubeconfig"
+  include_namespaces:
+    - "kube-system"
+  exclude_namespaces:
+    - "default"
