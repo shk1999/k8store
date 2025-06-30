@@ -1,0 +1,6 @@
+### Cluster Configuration files
+[cluster-name]
+kubeconfig = "/path/to/yourcluster/kubeconfig"
+
+[cluster-name]
+kubeconfig = "/path/to/yourcluster/kubeconfig"
