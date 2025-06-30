@@ -1,1 +1,96 @@
-#!/bin/bash
+#!/usr/bin/env bash
+
+set -eo pipefail
+
+# Configuration
+CONFIG_FILE="${K8STORE_CONFIG:-"$(dirname "$0")/../etc/clusters.toml"}"
+VELERO_NAMESPACE="${VELERO_NAMESPACE:-velero}"
+LOG_DIR="/var/log/k8store"
+
+# Initialize logging
+mkdir -p "$LOG_DIR"
+exec > >(tee -a "$LOG_DIR/operations.log") 2>&1
+
+# Load cluster config from TOML
+load_config() {
+  if ! command -v tomlq &>/dev/null; then
+    echo "ERROR: tomlq (from yq package) is required"
+    exit 1
+  fi
+
+  declare -gA CLUSTERS
+  while read -r cluster; do
+    CLUSTERS["$cluster"]=$(tomlq -r ".${cluster}.kubeconfig" "$CONFIG_FILE")
+  done < <(tomlq -r 'keys[]' "$CONFIG_FILE")
+}
+
+# Verify Velero installation
+check_velero() {
+  if ! kubectl get ns "$VELERO_NAMESPACE" &>/dev/null; then
+    echo "Velero not installed in namespace: $VELERO_NAMESPACE"
+    echo "Run: bin/install-velero.sh"
+    exit 1
+  fi
+}
+
+# Backup command
+backup_cluster() {
+  local cluster=$1
+  local kubeconfig=${CLUSTERS[$cluster]}
+  local backup_type=$2
+  local backup_name="${cluster}-$(date +%Y%m%d-%H%M%S)"
+
+  echo "[$(date)] Starting $backup_type backup for $cluster"
+
+  KUBECONFIG="$kubeconfig" velero backup create "$backup_name" \
+    --include-namespaces="*" \
+    --include-cluster-resources=true \
+    --snapshot-volumes=$([ "$backup_type" == "full" ] && echo "true" || echo "false") \
+    --wait
+
+  echo "Backup completed: $backup_name"
+}
+
+# Restore command
+restore_backup() {
+  local backup_name=$1
+  local target_cluster=$2
+  local kubeconfig=${CLUSTERS[$target_cluster]}
+
+  echo "[$(date)] Restoring $backup_name to $target_cluster"
+
+  KUBECONFIG="$kubeconfig" velero restore create "restore-$(date +%s)" \
+    --from-backup "$backup_name" \
+    --wait
+
+  echo "Restore completed to $target_cluster"
+}
+
+# Main program
+main() {
+  load_config
+  check_velero
+
+  case "$1" in
+    backup)
+      backup_cluster "$2" "${3:-full}"  # Default to full backup
+      ;;
+    restore)
+      restore_backup "$2" "$3"
+      ;;
+    list)
+      velero backup get
+      ;;
+    *)
+      echo "Usage: $0 [command]"
+      echo "Commands:"
+      echo "  backup <cluster> [type]    # type: full/manifest (default: full)"
+      echo "  restore <backup> <cluster>"
+      echo "  list"
+      exit 1
+      ;;
+  esac
+}
+
+main "$@"
+
